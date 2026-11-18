@@ -20,11 +20,15 @@ import androidx.activity.ComponentActivity;
  * the game view on screen with setContent { AndroidView(...) }. onCreate() only
  * builds the view hierarchy - it does not call setContentView() - and the
  * launcher activity picks up that view through getRootLayout().
+ *
+ * The engine is initialised only once (guard flag) so a re-created activity
+ * cannot start a second renderer.
  */
 public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelperListener {
 
     private Cocos2dxGLSurfaceView mGLSurfaceView;
     private FrameLayout mFrameLayout;
+    private boolean mEngineStarted = false;
     private static Cocos2dxActivity sContext;
 
     public static Cocos2dxActivity getActivity() {
@@ -35,9 +39,13 @@ public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelpe
         return new Cocos2dxGLSurfaceView(this);
     }
 
-    /** The view the launcher activity has to show. */
+    /** The view the launcher activity has to show. Never null after onCreate. */
     public FrameLayout getRootLayout() {
         return mFrameLayout;
+    }
+
+    public boolean isEngineReady() {
+        return mEngineStarted;
     }
 
     @Override
@@ -48,18 +56,25 @@ public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelpe
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        mFrameLayout = new FrameLayout(this);
-        mFrameLayout.setLayoutParams(new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+        if (mFrameLayout == null) {
+            mFrameLayout = new FrameLayout(this);
+            mFrameLayout.setLayoutParams(new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
 
-        mGLSurfaceView = onCreateView();
-        mGLSurfaceView.setCocos2dxRenderer(new Cocos2dxRenderer());
-        mFrameLayout.addView(mGLSurfaceView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+        if (mGLSurfaceView == null) {
+            mGLSurfaceView = onCreateView();
+            mGLSurfaceView.setCocos2dxRenderer(new Cocos2dxRenderer());
+            mFrameLayout.addView(mGLSurfaceView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
 
-        Cocos2dxHelper.init(this, this);
+        if (!mEngineStarted) {
+            mEngineStarted = true;
+            Cocos2dxHelper.init(this, this);
+        }
     }
 
     @Override
@@ -83,7 +98,9 @@ public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelpe
     @Override
     protected void onDestroy() {
         Cocos2dxHelper.onDestroy();
-        sContext = null;
+        if (sContext == this) {
+            sContext = null;
+        }
         super.onDestroy();
     }
 
@@ -101,11 +118,15 @@ public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelpe
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                new AlertDialog.Builder(Cocos2dxActivity.this)
-                        .setTitle(pTitle)
-                        .setMessage(pMessage)
-                        .setPositiveButton(android.R.string.ok, null)
-                        .show();
+                try {
+                    new AlertDialog.Builder(Cocos2dxActivity.this)
+                            .setTitle(pTitle)
+                            .setMessage(pMessage)
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show();
+                } catch (Throwable ignored) {
+                    // window already gone
+                }
             }
         });
     }

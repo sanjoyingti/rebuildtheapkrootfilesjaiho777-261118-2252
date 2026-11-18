@@ -9,7 +9,13 @@ import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import org.cocos2dx.lib.Cocos2dxActivity
@@ -29,11 +35,12 @@ import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
  * on a short retry timer for 90 seconds so that it lands no matter when the
  * engine finished initialising its script engine.
  *
- * BUILD FIX: the root layout is fetched with getRootLayout() - the property
- * spelling "rootLayout" is only a Kotlin synthetic for Java beans and is not
- * guaranteed to resolve here, so the explicit accessor is used. The factory
- * also detaches the view from a previous parent before handing it to Compose,
- * otherwise a second composition would crash with "child already has a parent".
+ * Build notes:
+ *  - getRootLayout() (an explicit accessor, not the Kotlin synthetic property)
+ *    is used, and the result is allowed to be null. If the engine could not
+ *    build its view the screen shows a plain message instead of crashing.
+ *  - The factory detaches the view from an earlier parent, otherwise a second
+ *    composition would throw "child already has a parent".
  */
 open class MainActivity : Cocos2dxActivity() {
 
@@ -50,8 +57,7 @@ open class MainActivity : Cocos2dxActivity() {
             val source = patchSource
             if (source != null) {
                 try {
-                    // Must run on the GL thread: that is the thread that owns
-                    // the JavaScript context.
+                    // Must run on the GL thread: that thread owns the JS context.
                     runOnGLThread(Runnable {
                         try {
                             Cocos2dxJavascriptJavaBridge.evalString(source)
@@ -77,16 +83,30 @@ open class MainActivity : Cocos2dxActivity() {
         val gameRoot = getRootLayout()
 
         setContent {
-            AndroidView(
-                factory = {
-                    val parent = gameRoot.parent
-                    if (parent is ViewGroup) {
-                        parent.removeView(gameRoot)
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                if (gameRoot != null) {
+                    AndroidView(
+                        factory = {
+                            val parent = gameRoot.parent
+                            if (parent is ViewGroup) {
+                                parent.removeView(gameRoot)
+                            }
+                            gameRoot
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = "Engine surface unavailable")
                     }
-                    gameRoot
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                }
+            }
         }
 
         requestLegacyStoragePermission()
@@ -134,6 +154,12 @@ open class MainActivity : Cocos2dxActivity() {
                 Log.w(TAG, "permission request failed", t)
             }
         }
+    }
+
+    /** Compose preview helper, unused at runtime. */
+    @Composable
+    private fun EnginePlaceholder() {
+        Text(text = "Engine surface unavailable")
     }
 
     private companion object {
