@@ -10,16 +10,27 @@ import android.util.Log
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.cocos2dx.lib.Cocos2dxActivity
+import org.cocos2dx.lib.Cocos2dxHelper
 import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
 
 /**
@@ -36,15 +47,16 @@ import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
  * on a short retry timer for 90 seconds so that it lands no matter when the
  * engine finished initialising its script engine.
  *
- * Build notes:
+ * Build / runtime notes:
  *  - getRootLayout() (an explicit accessor, not the Kotlin synthetic property)
  *    is used, and the result is allowed to be null. If the engine could not
  *    build its view the screen shows a plain message instead of crashing.
  *  - The factory detaches the view from an earlier parent, otherwise a second
  *    composition would throw "child already has a parent".
- *  - If Compose itself cannot attach the engine view (theme trouble, etc.) the
- *    activity falls back to plain setContentView(gameRoot), so the game always
- *    reaches the screen.
+ *  - If Compose itself cannot attach the engine view the activity falls back to
+ *    plain setContentView(gameRoot), so the game always reaches the screen.
+ *  - If the prebuilt engine library did not load (wrong ABI) the screen says so
+ *    instead of staying black.
  */
 open class MainActivity : Cocos2dxActivity() {
 
@@ -54,27 +66,23 @@ open class MainActivity : Cocos2dxActivity() {
     private var patchSource: String? = null
 
     private var attempts = 0
+    private var destroyed = false
+    private var injectFinished = false
 
     private val injector = object : Runnable {
         override fun run() {
+            if (destroyed) {
+                return
+            }
             attempts++
             val source = patchSource
             if (source != null) {
-                try {
-                    // Must run on the GL thread: that thread owns the JS context.
-                    runOnGLThread(Runnable {
-                        try {
-                            Cocos2dxJavascriptJavaBridge.evalString(source)
-                        } catch (t: Throwable) {
-                            // Engine not ready yet - the next tick retries.
-                        }
-                    })
-                } catch (t: Throwable) {
-                    Log.w(TAG, "could not queue the patch", t)
-                }
+                evalOnGLThread(source)
             }
-            if (attempts < MAX_ATTEMPTS) {
+            if (attempts < MAX_ATTEMPTS && !destroyed) {
                 injectorHandler.postDelayed(this, RETRY_INTERVAL_MS)
+            } else {
+                injectFinished = true
             }
         }
     }
@@ -82,18 +90,25 @@ open class MainActivity : Cocos2dxActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        goFullScreen()
+
         // super.onCreate() built the GL surface and started the engine.
         // getRootLayout() returns the FrameLayout that holds that surface.
         val gameRoot = getRootLayout()
+        val libraryLoaded = Cocos2dxHelper.isNativeLibraryLoaded()
 
         try {
             setContent {
                 MaterialTheme {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
+                        color = Color.Black
                     ) {
-                        EngineHost(gameRoot)
+                        if (gameRoot == null || !libraryLoaded) {
+                            EngineUnavailable(libraryLoaded)
+                        } else {
+                            EngineHost(gameRoot)
+                        }
                     }
                 }
             }
@@ -110,31 +125,82 @@ open class MainActivity : Cocos2dxActivity() {
         injectorHandler.postDelayed(injector, FIRST_DELAY_MS)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (!injectFinished && !destroyed) {
+            injectorHandler.removeCallbacks(injector)
+            injectorHandler.postDelayed(injector, RETRY_INTERVAL_MS)
+        }
+    }
+
     override fun onDestroy() {
-        injectorHandler.removeCallbacks(injector)
+        destroyed = true
+        injectorHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
+    // ------------------------------------------------------------------ views
+
     @Composable
-    private fun EngineHost(gameRoot: FrameLayout?) {
-        if (gameRoot == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+    private fun EngineHost(gameRoot: FrameLayout) {
+        AndroidView(
+            factory = { _ ->
+                val parent = gameRoot.parent
+                if (parent is ViewGroup) {
+                    parent.removeView(gameRoot)
+                }
+                gameRoot
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    @Composable
+    private fun EngineUnavailable(libraryLoaded: Boolean) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Text(text = "Engine surface unavailable")
+                Text(
+                    text = "Jaiho 777",
+                    color = Color(0xFFFFD54F),
+                    fontSize = 26.sp,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = if (libraryLoaded) {
+                        "The game engine is starting up.\nIf the screen stays black, close and reopen the app."
+                    } else {
+                        "The game engine could not be loaded on this device (unsupported CPU type)."
+                    },
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
             }
-        } else {
-            AndroidView(
-                factory = { _ ->
-                    val parent = gameRoot.parent
-                    if (parent is ViewGroup) {
-                        parent.removeView(gameRoot)
-                    }
-                    gameRoot
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+        }
+    }
+
+    // ------------------------------------------------------------------ patch
+
+    private fun evalOnGLThread(code: String) {
+        try {
+            // Must run on the GL thread: that thread owns the JS context.
+            runOnGLThread(Runnable {
+                try {
+                    Cocos2dxJavascriptJavaBridge.evalString(code)
+                } catch (t: Throwable) {
+                    // Engine not ready yet - the next tick retries.
+                }
+            })
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not queue the patch", t)
         }
     }
 
@@ -152,8 +218,24 @@ open class MainActivity : Cocos2dxActivity() {
         }.start()
     }
 
+    // -------------------------------------------------------------- platform
+
+    private fun goFullScreen() {
+        try {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } catch (t: Throwable) {
+            Log.w(TAG, "full screen setup failed", t)
+        }
+    }
+
     private fun requestLegacyStoragePermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return
+        }
         val needed = ArrayList<String>()
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED

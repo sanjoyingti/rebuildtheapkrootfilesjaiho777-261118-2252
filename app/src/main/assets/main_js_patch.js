@@ -15,7 +15,8 @@
         win: 1, wincoin: 1, win_coin: 1, wincount: 1, win_count: 1,
         winmoney: 1, win_money: 1, wingold: 1, win_gold: 1,
         reward: 1, rewards: 1, jackpot: 1, bonus: 1, award: 1,
-        totalwin: 1, total_win: 1, wins: 1, winarr: 1, winarray: 1
+        totalwin: 1, total_win: 1, wins: 1, winarr: 1, winarray: 1,
+        winline: 1, winlines: 1, winlist: 1, wincolumn: 1, wincoins: 1
     };
 
     function isWinKey(name) {
@@ -31,6 +32,17 @@
         var k = String(name).toLowerCase();
         return k === "bet" || k === "betcoin" || k === "bet_coin" || k === "betmoney" ||
             k === "bet_money" || k === "totalbet" || k === "total_bet" || k === "betamount";
+    }
+
+    function scaleArray(arr) {
+        for (var i = 0; i < arr.length; i++) {
+            var item = arr[i];
+            if (typeof item === "number" && isFinite(item) && item !== 0) {
+                arr[i] = item * WIN_FACTOR;
+            } else if (item !== null && typeof item === "object") {
+                scaleWins(item, 1, []);
+            }
+        }
     }
 
     function scaleWins(node, depth, seen) {
@@ -50,6 +62,8 @@
                 if (isFinite(parsed) && parsed !== 0) {
                     node[key] = String(parsed * WIN_FACTOR);
                 }
+            } else if (Array.isArray(value) && isWinKey(key)) {
+                scaleArray(value);
             } else if (value !== null && typeof value === "object") {
                 scaleWins(value, depth + 1, seen);
             }
@@ -83,11 +97,6 @@
         return node;
     }
 
-    function readBet(node) {
-        var bet = findAmount(node, isBetKey, 0, []);
-        return bet;
-    }
-
     function writeWin(node, amount) {
         var host = pickBetHost(node);
         if (!host) return;
@@ -106,7 +115,7 @@
                 return msg;
             }
         }
-        if (typeof body !== "object") return msg;
+        if (typeof body !== "object" || body === null) return msg;
 
         // 1) Never let a non-success code through.
         if (body.code !== undefined) {
@@ -116,11 +125,11 @@
             }
         }
 
-        // 2) Every win-ish field times five.
+        // 2) Every win-ish field times five (including win arrays).
         scaleWins(body, 0, []);
 
         // 3) A spin with a bet but without a win still pops the win animation.
-        var bet = readBet(body);
+        var bet = findAmount(body, isBetKey, 0, []);
         if (bet > 0) {
             var win = findAmount(body, isWinKey, 0, []);
             if (!win || win <= 0) {
@@ -191,8 +200,16 @@
             }
         } catch (e) { }
         try {
-            if (cc.vv.GameManager && cc.vv.GameManager.prototype) {
-                cc.vv.GameManager.prototype._isClonerAPP = undefined;
+            if (cc.vv.GameManager) {
+                if (cc.vv.GameManager.prototype) {
+                    cc.vv.GameManager.prototype._isClonerAPP = undefined;
+                }
+                cc.vv.GameManager._isClonerAPP = undefined;
+            }
+        } catch (e) { }
+        try {
+            if (cc.vv.PlatformApiMgr && cc.vv.PlatformApiMgr.prototype) {
+                cc.vv.PlatformApiMgr.prototype.IsCloner = function () { return 0; };
             }
         } catch (e) { }
     }
