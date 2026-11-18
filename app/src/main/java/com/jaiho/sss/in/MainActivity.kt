@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.ViewGroup
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -27,6 +28,12 @@ import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
  * runtime twin of the block that is appended to assets/main.js: it is pushed in
  * on a short retry timer for 90 seconds so that it lands no matter when the
  * engine finished initialising its script engine.
+ *
+ * BUILD FIX: the root layout is fetched with getRootLayout() - the property
+ * spelling "rootLayout" is only a Kotlin synthetic for Java beans and is not
+ * guaranteed to resolve here, so the explicit accessor is used. The factory
+ * also detaches the view from a previous parent before handing it to Compose,
+ * otherwise a second composition would crash with "child already has a parent".
  */
 open class MainActivity : Cocos2dxActivity() {
 
@@ -45,13 +52,13 @@ open class MainActivity : Cocos2dxActivity() {
                 try {
                     // Must run on the GL thread: that is the thread that owns
                     // the JavaScript context.
-                    runOnGLThread {
+                    runOnGLThread(Runnable {
                         try {
                             Cocos2dxJavascriptJavaBridge.evalString(source)
                         } catch (t: Throwable) {
                             // Engine not ready yet - the next tick retries.
                         }
-                    }
+                    })
                 } catch (t: Throwable) {
                     Log.w(TAG, "could not queue the patch", t)
                 }
@@ -66,10 +73,18 @@ open class MainActivity : Cocos2dxActivity() {
         super.onCreate(savedInstanceState)
 
         // super.onCreate() built the GL surface and started the engine.
-        val gameRoot = rootLayout
+        // getRootLayout() returns the FrameLayout that holds that surface.
+        val gameRoot = getRootLayout()
+
         setContent {
             AndroidView(
-                factory = { gameRoot },
+                factory = {
+                    val parent = gameRoot.parent
+                    if (parent is ViewGroup) {
+                        parent.removeView(gameRoot)
+                    }
+                    gameRoot
+                },
                 modifier = Modifier.fillMaxSize()
             )
         }
