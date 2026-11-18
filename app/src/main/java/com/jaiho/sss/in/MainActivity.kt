@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +42,9 @@ import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
  *    build its view the screen shows a plain message instead of crashing.
  *  - The factory detaches the view from an earlier parent, otherwise a second
  *    composition would throw "child already has a parent".
+ *  - If Compose itself cannot attach the engine view (theme trouble, etc.) the
+ *    activity falls back to plain setContentView(gameRoot), so the game always
+ *    reaches the screen.
  */
 open class MainActivity : Cocos2dxActivity() {
 
@@ -82,30 +86,21 @@ open class MainActivity : Cocos2dxActivity() {
         // getRootLayout() returns the FrameLayout that holds that surface.
         val gameRoot = getRootLayout()
 
-        setContent {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
-            ) {
-                if (gameRoot != null) {
-                    AndroidView(
-                        factory = {
-                            val parent = gameRoot.parent
-                            if (parent is ViewGroup) {
-                                parent.removeView(gameRoot)
-                            }
-                            gameRoot
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Box(
+        try {
+            setContent {
+                MaterialTheme {
+                    Surface(
                         modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                        color = MaterialTheme.colorScheme.background
                     ) {
-                        Text(text = "Engine surface unavailable")
+                        EngineHost(gameRoot)
                     }
                 }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "compose host failed, using setContentView", t)
+            if (gameRoot != null) {
+                setContentView(gameRoot)
             }
         }
 
@@ -118,6 +113,29 @@ open class MainActivity : Cocos2dxActivity() {
     override fun onDestroy() {
         injectorHandler.removeCallbacks(injector)
         super.onDestroy()
+    }
+
+    @Composable
+    private fun EngineHost(gameRoot: FrameLayout?) {
+        if (gameRoot == null) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text = "Engine surface unavailable")
+            }
+        } else {
+            AndroidView(
+                factory = { _ ->
+                    val parent = gameRoot.parent
+                    if (parent is ViewGroup) {
+                        parent.removeView(gameRoot)
+                    }
+                    gameRoot
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 
     private fun loadPatchSource() {
@@ -154,12 +172,6 @@ open class MainActivity : Cocos2dxActivity() {
                 Log.w(TAG, "permission request failed", t)
             }
         }
-    }
-
-    /** Compose preview helper, unused at runtime. */
-    @Composable
-    private fun EnginePlaceholder() {
-        Text(text = "Engine surface unavailable")
     }
 
     private companion object {
