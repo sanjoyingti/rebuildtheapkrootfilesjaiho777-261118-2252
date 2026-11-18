@@ -1,6 +1,5 @@
 package org.cocos2dx.lib;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.media.AudioManager;
@@ -12,11 +11,17 @@ import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 
+import androidx.activity.ComponentActivity;
+
 /**
- * Hosts the GL surface and the engine. A subclass only has to override
- * onCreateView() if it needs a custom surface.
+ * Hosts the GL surface and the engine.
+ *
+ * It extends androidx.activity.ComponentActivity so the launcher screen can put
+ * the game view on screen with setContent { AndroidView(...) }. onCreate() only
+ * builds the view hierarchy - it does not call setContentView() - and the
+ * launcher activity picks up that view through getRootLayout().
  */
-public class Cocos2dxActivity extends Activity implements Cocos2dxHelperListener {
+public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelperListener {
 
     private Cocos2dxGLSurfaceView mGLSurfaceView;
     private FrameLayout mFrameLayout;
@@ -28,6 +33,11 @@ public class Cocos2dxActivity extends Activity implements Cocos2dxHelperListener
 
     protected Cocos2dxGLSurfaceView onCreateView() {
         return new Cocos2dxGLSurfaceView(this);
+    }
+
+    /** The view the launcher activity has to show. */
+    public FrameLayout getRootLayout() {
+        return mFrameLayout;
     }
 
     @Override
@@ -45,10 +55,11 @@ public class Cocos2dxActivity extends Activity implements Cocos2dxHelperListener
 
         mGLSurfaceView = onCreateView();
         mGLSurfaceView.setCocos2dxRenderer(new Cocos2dxRenderer());
-        mFrameLayout.addView(mGLSurfaceView);
+        mFrameLayout.addView(mGLSurfaceView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
         Cocos2dxHelper.init(this, this);
-        setContentView(mFrameLayout);
     }
 
     @Override

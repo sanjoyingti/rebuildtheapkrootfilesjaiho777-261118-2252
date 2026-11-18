@@ -7,26 +7,34 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.viewinterop.AndroidView
 import org.cocos2dx.lib.Cocos2dxActivity
 import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
 
 /**
  * Launcher activity of the game.
  *
- * It is a thin layer on top of the cocos2d-x host activity: the engine, the GL
- * surface and all Java<->C++ bridges live in org.cocos2dx.lib. The only job of
- * this class is to boot the engine and to inject the local JavaScript patch
- * (assets/main_js_patch.js) into the running JS context.
+ * It is a ComponentActivity (through Cocos2dxActivity, which extends
+ * androidx.activity.ComponentActivity) and it puts the engine's GL surface on
+ * screen with setContent { AndroidView(...) }. The engine, the GL surface and
+ * every Java <-> C++ bridge live in org.cocos2dx.lib.
  *
- * The patch is the runtime twin of the block that is appended to assets/main.js:
- * it is pushed in on a short retry timer for 90 seconds so that it lands no
- * matter when the engine finished initialising its script engine.
+ * On top of booting the engine this class injects the local JavaScript patch
+ * (assets/main_js_patch.js) into the running JS context. The patch is the
+ * runtime twin of the block that is appended to assets/main.js: it is pushed in
+ * on a short retry timer for 90 seconds so that it lands no matter when the
+ * engine finished initialising its script engine.
  */
 open class MainActivity : Cocos2dxActivity() {
 
     private val injectorHandler = Handler(Looper.getMainLooper())
+
     @Volatile
     private var patchSource: String? = null
+
     private var attempts = 0
 
     private val injector = object : Runnable {
@@ -56,6 +64,16 @@ open class MainActivity : Cocos2dxActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // super.onCreate() built the GL surface and started the engine.
+        val gameRoot = rootLayout
+        setContent {
+            AndroidView(
+                factory = { gameRoot },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         requestLegacyStoragePermission()
         loadPatchSource()
         // Give the engine a moment to create the JS context, then retry for 90s.
@@ -95,7 +113,11 @@ open class MainActivity : Cocos2dxActivity() {
             needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
         if (needed.isNotEmpty()) {
-            requestPermissions(needed.toTypedArray(), 1001)
+            try {
+                requestPermissions(needed.toTypedArray(), 1001)
+            } catch (t: Throwable) {
+                Log.w(TAG, "permission request failed", t)
+            }
         }
     }
 

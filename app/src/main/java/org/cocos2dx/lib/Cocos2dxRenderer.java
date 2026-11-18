@@ -8,6 +8,9 @@ import javax.microedition.khronos.opengles.GL10;
 /**
  * The GL renderer. Native entry points are resolved by name inside the prebuilt
  * library, therefore neither names nor signatures may change.
+ *
+ * Every native call is wrapped: a device that cannot load the engine library
+ * keeps a black but stable screen.
  */
 public class Cocos2dxRenderer implements GLSurfaceView.Renderer {
 
@@ -30,13 +33,14 @@ public class Cocos2dxRenderer implements GLSurfaceView.Renderer {
         pGL10.glEnable(GL10.GL_TEXTURE_2D);
 
         synchronized (this) {
-            if (!mInitialised && mScreenWidth > 0 && mScreenHeight > 0) {
-                mInitialised = true;
-                nativeInit(mScreenWidth, mScreenHeight);
-            } else if (!mInitialised) {
-                // Very first frame: initialise with the view size we do have.
-                mInitialised = true;
+            if (mInitialised) {
+                return;
+            }
+            mInitialised = true;
+            try {
                 nativeInit(Math.max(1, mScreenWidth), Math.max(1, mScreenHeight));
+            } catch (Throwable t) {
+                // library missing - nothing to initialise
             }
         }
     }
@@ -49,7 +53,11 @@ public class Cocos2dxRenderer implements GLSurfaceView.Renderer {
                 return;
             }
         }
-        nativeOnSurfaceChanged(pWidth, pHeight);
+        try {
+            nativeOnSurfaceChanged(pWidth, pHeight);
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     @Override
@@ -59,39 +67,67 @@ public class Cocos2dxRenderer implements GLSurfaceView.Renderer {
                 return;
             }
         }
-        nativeRender();
+        try {
+            nativeRender();
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     public void handleOnResume() {
         synchronized (this) {
             mPaused = false;
         }
-        nativeOnResume();
+        try {
+            nativeOnResume();
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     public void handleOnPause() {
         synchronized (this) {
             mPaused = true;
         }
-        nativeOnPause();
+        try {
+            nativeOnPause();
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     // ------------------------------------------------------------------ touch
 
     public void handleActionDown(final int pID, final float pX, final float pY) {
-        nativeTouchesBegin(pID, pX, pY);
+        try {
+            nativeTouchesBegin(pID, pX, pY);
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     public void handleActionUp(final int pID, final float pX, final float pY) {
-        nativeTouchesEnd(pID, pX, pY);
+        try {
+            nativeTouchesEnd(pID, pX, pY);
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     public void handleActionMove(final int[] pIDs, final float[] pXs, final float[] pYs) {
-        nativeTouchesMove(pIDs, pXs, pYs);
+        try {
+            nativeTouchesMove(pIDs, pXs, pYs);
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     public void handleActionCancel(final int[] pIDs, final float[] pXs, final float[] pYs) {
-        nativeTouchesCancel(pIDs, pXs, pYs);
+        try {
+            nativeTouchesCancel(pIDs, pXs, pYs);
+        } catch (Throwable t) {
+            // library missing
+        }
     }
 
     // ---------------------------------------------------------------- natives

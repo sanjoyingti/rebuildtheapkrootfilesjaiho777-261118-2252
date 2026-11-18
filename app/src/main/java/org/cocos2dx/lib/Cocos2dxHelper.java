@@ -14,10 +14,28 @@ import java.util.Locale;
  * Central helper used by the native engine. Every method name here is called
  * from libcocos2djs.so through JNI (JniHelper) by its plain Java name, so the
  * names must not be changed.
+ *
+ * The prebuilt engine library is loaded here, in the static initialiser, so it
+ * is guaranteed to be present before any native method is touched. All native
+ * calls are guarded, so a device without a matching ABI degrades instead of
+ * crashing.
  */
 public class Cocos2dxHelper {
 
     private static final String TAG = "Cocos2dxHelper";
+    private static final String NATIVE_LIBRARY = "cocos2djs";
+
+    private static boolean sLibraryLoaded = false;
+
+    static {
+        try {
+            System.loadLibrary(NATIVE_LIBRARY);
+            sLibraryLoaded = true;
+        } catch (Throwable t) {
+            sLibraryLoaded = false;
+            Log.e(TAG, "native library " + NATIVE_LIBRARY + " not loaded", t);
+        }
+    }
 
     private static Context sContext = null;
     private static AssetManager sAssetManager = null;
@@ -26,6 +44,10 @@ public class Cocos2dxHelper {
     private static String sApkPath = "";
     private static String sObbPath = "";
     private static Cocos2dxHelperListener sCocos2dxHelperListener = null;
+
+    public static boolean isNativeLibraryLoaded() {
+        return sLibraryLoaded;
+    }
 
     /** Called once by the activity before the renderer starts. */
     public static void init(final Context pContext, final Cocos2dxHelperListener pListener) {
@@ -45,10 +67,19 @@ public class Cocos2dxHelper {
             sWritablePath = pContext.getCacheDir().getAbsolutePath();
         }
 
+        if (!sLibraryLoaded) {
+            Log.e(TAG, "engine library missing, natives are skipped");
+            return;
+        }
+
         // Order matters: the native side stores the context, then the apk path
         // is used to mount the assets from the installed package.
-        nativeSetContext(pContext, pListener);
-        nativeSetApkPath(sApkPath);
+        try {
+            nativeSetContext(pContext, pListener);
+            nativeSetApkPath(sApkPath);
+        } catch (Throwable t) {
+            Log.e(TAG, "native init failed", t);
+        }
 
         Log.i(TAG, "initialised, writable path = " + sWritablePath);
     }
@@ -124,7 +155,14 @@ public class Cocos2dxHelper {
     }
 
     public static void setEditTextDialogResult(final byte[] pBytes) {
-        nativeSetEditTextDialogResult(pBytes);
+        if (!sLibraryLoaded) {
+            return;
+        }
+        try {
+            nativeSetEditTextDialogResult(pBytes);
+        } catch (Throwable t) {
+            Log.w(TAG, "nativeSetEditTextDialogResult failed", t);
+        }
     }
 
     public static void onResume() {
