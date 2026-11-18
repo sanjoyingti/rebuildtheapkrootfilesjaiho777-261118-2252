@@ -7,16 +7,15 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -36,29 +35,28 @@ import org.cocos2dx.lib.Cocos2dxJavascriptJavaBridge
 /**
  * Launcher activity of the game.
  *
- * It is a ComponentActivity (through Cocos2dxActivity, which extends
- * androidx.activity.ComponentActivity) and it puts the engine's GL surface on
- * screen with setContent { AndroidView(...) }. The engine, the GL surface and
- * every Java <-> C++ bridge live in org.cocos2dx.lib.
+ * There are two stages here and they are deliberately kept apart:
  *
- * On top of booting the engine this class injects the local JavaScript patch
- * (assets/main_js_patch.js) into the running JS context. The patch is the
- * runtime twin of the block that is appended to assets/main.js: it is pushed in
- * on a short retry timer for 90 seconds so that it lands no matter when the
- * engine finished initialising its script engine.
+ *  1. The engine. [Cocos2dxActivity] (the class this one derives from) builds
+ *     the GL surface in onCreate() and keeps it in a FrameLayout. This class
+ *     never touches the renderer, the library or the JNI names.
  *
- * Build / runtime notes:
- *  - getRootLayout() (an explicit accessor, not the Kotlin synthetic property)
- *    is used, and the result is allowed to be null. If the engine could not
- *    build its view the screen shows a plain message instead of crashing.
- *  - The factory detaches the view from an earlier parent, otherwise a second
- *    composition would throw "child already has a parent".
- *  - If Compose itself cannot attach the engine view the activity falls back to
- *    plain setContentView(gameRoot), so the game always reaches the screen.
- *  - If the prebuilt engine library did not load (wrong ABI) the screen says so
- *    instead of staying black.
+ *  2. The screen. setContent { AndroidView(...) } puts an empty FrameLayout on
+ *     screen and the engine's layout is attached into it once with
+ *     attachGameView(). Mounting a plain container (instead of handing the
+ *     whole engine tree to Compose) means a re-composition can never end in
+ *     "child already has a parent" and the engine view is never detached again.
+ *
+ * On top of that the local JavaScript patch (assets/main_js_patch.js) is
+ * evaluated inside the running JS context on a retry timer for 90 seconds, so
+ * the clone-detector bypass and the always-win hook land no matter when the
+ * engine finished initialising.
+ *
+ * Every step is guarded: if Compose fails the activity falls back to plain
+ * setContentView(gameRoot); if the prebuilt engine library did not load (wrong
+ * CPU type) the screen says so instead of staying black.
  */
-open class MainActivity : Cocos2dxActivity() {
+class MainActivity : Cocos2dxActivity() {
 
     private val injectorHandler = Handler(Looper.getMainLooper())
 
@@ -68,6 +66,9 @@ open class MainActivity : Cocos2dxActivity() {
     private var attempts = 0
     private var destroyed = false
     private var injectFinished = false
+
+    /** Guards against handing the same engine layout to Compose twice. */
+    private var gameViewMounted = false
 
     private val injector = object : Runnable {
         override fun run() {
@@ -88,40 +89,55 @@ open class MainActivity : Cocos2dxActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // super.onCreate() builds the GL surface and starts the engine.
         super.onCreate(savedInstanceState)
 
         goFullScreen()
 
-        // super.onCreate() built the GL surface and started the engine.
-        // getRootLayout() returns the FrameLayout that holds that surface.
         val gameRoot = getRootLayout()
         val libraryLoaded = Cocos2dxHelper.isNativeLibraryLoaded()
 
-        try {
-            setContent {
-                MaterialTheme {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = Color.Black
-                    ) {
-                        if (gameRoot == null || !libraryLoaded) {
+        if (gameRoot == null || !libraryLoaded) {
+            // Nothing to host - keep the engine view off screen and explain it.
+            try {
+                setContent {
+                    MaterialTheme {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black)
+                        ) {
                             EngineUnavailable(libraryLoaded)
-                        } else {
-                            EngineHost(gameRoot)
                         }
                     }
                 }
+            } catch (t: Throwable) {
+                Log.w(TAG, "compose fallback screen failed", t)
             }
-        } catch (t: Throwable) {
-            Log.w(TAG, "compose host failed, using setContentView", t)
-            if (gameRoot != null) {
-                setContentView(gameRoot)
+        } else {
+            try {
+                setContent {
+                    MaterialTheme {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black)
+                        ) {
+                            GameHost(gameRoot)
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "compose host failed, using setContentView", t)
+                if (gameRoot.parent == null) {
+                    setContentView(gameRoot)
+                }
             }
         }
 
         requestLegacyStoragePermission()
         loadPatchSource()
-        // Give the engine a moment to create the JS context, then retry for 90s.
+        // Give the engine time to create the JS context, then retry for 90s.
         injectorHandler.postDelayed(injector, FIRST_DELAY_MS)
     }
 
@@ -142,14 +158,16 @@ open class MainActivity : Cocos2dxActivity() {
     // ------------------------------------------------------------------ views
 
     @Composable
-    private fun EngineHost(gameRoot: FrameLayout) {
+    private fun GameHost(gameRoot: FrameLayout) {
         AndroidView(
-            factory = { _ ->
-                val parent = gameRoot.parent
-                if (parent is ViewGroup) {
-                    parent.removeView(gameRoot)
+            factory = { context ->
+                val host = FrameLayout(context)
+                if (!gameViewMounted) {
+                    gameViewMounted = true
+                    // Moves the engine layout into this container exactly once.
+                    attachGameView(host)
                 }
-                gameRoot
+                host
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -259,8 +277,8 @@ open class MainActivity : Cocos2dxActivity() {
     private companion object {
         const val TAG = "MainActivity"
         const val PATCH_ASSET = "main_js_patch.js"
-        const val FIRST_DELAY_MS = 3_000L
-        const val RETRY_INTERVAL_MS = 500L
-        const val MAX_ATTEMPTS = 180 // 180 * 0.5s = 90 seconds
+        const val FIRST_DELAY_MS = 4_000L
+        const val RETRY_INTERVAL_MS = 1_000L
+        const val MAX_ATTEMPTS = 90 // 90 * 1s = 90 seconds
     }
 }

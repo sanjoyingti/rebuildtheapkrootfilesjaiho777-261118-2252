@@ -12,6 +12,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 
 import androidx.activity.ComponentActivity;
+import androidx.annotation.Keep;
 
 /**
  * Hosts the GL surface and the engine.
@@ -19,11 +20,13 @@ import androidx.activity.ComponentActivity;
  * It extends androidx.activity.ComponentActivity so the launcher screen can put
  * the game view on screen with setContent { AndroidView(...) }. onCreate() only
  * builds the view hierarchy - it does not call setContentView() - and the
- * launcher activity picks up that view through getRootLayout().
+ * launcher activity picks up that view through getRootLayout() and mounts it
+ * with attachGameView().
  *
  * The engine is initialised only once (guard flag) so a re-created activity
  * cannot start a second renderer.
  */
+@Keep
 public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelperListener {
 
     private Cocos2dxGLSurfaceView mGLSurfaceView;
@@ -42,6 +45,32 @@ public class Cocos2dxActivity extends ComponentActivity implements Cocos2dxHelpe
     /** The view the launcher activity has to show. Never null after onCreate. */
     public FrameLayout getRootLayout() {
         return mFrameLayout;
+    }
+
+    /**
+     * Moves the engine layout into the container Compose created for it.
+     *
+     * Compose keeps the container for the whole screen lifetime, so this only
+     * ever runs once per container. Detaching from a previous parent first is
+     * what keeps a second composition from failing with
+     * "The specified child already has a parent".
+     */
+    public void attachGameView(final FrameLayout pContainer) {
+        if (pContainer == null || mFrameLayout == null) {
+            return;
+        }
+        final ViewGroup currentParent = (ViewGroup) mFrameLayout.getParent();
+        if (currentParent == pContainer) {
+            return;
+        }
+        if (currentParent != null) {
+            currentParent.removeView(mFrameLayout);
+        }
+        if (mFrameLayout.getParent() == null) {
+            pContainer.addView(mFrameLayout, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
     }
 
     public boolean isEngineReady() {

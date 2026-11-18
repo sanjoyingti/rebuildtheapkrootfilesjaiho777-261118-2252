@@ -3,6 +3,8 @@ package org.cocos2dx.javascript;
 import android.app.Activity;
 import android.os.Bundle;
 
+import androidx.annotation.Keep;
+
 /**
  * The class the game script talks to through jsb.reflection.callStaticMethod
  * ("org/cocos2dx/javascript/AppActivity").
@@ -28,7 +30,11 @@ import android.os.Bundle;
  * getChannelstr() is left untouched as a pure native method: the stock channel
  * value keeps coming out of libcocos2djs.so and reaches the server unchanged
  * (otherwise login fails with spcode 218 "unsupported device").
+ *
+ * The class is annotated with @Keep so a shrinking release build cannot strip
+ * the reflection target.
  */
+@Keep
 public class AppActivity extends Activity {
 
     @Override
